@@ -1,0 +1,1 @@
+target_add_test(test_monitor_collector_service test-fabric-lib) 

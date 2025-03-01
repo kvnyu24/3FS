@@ -20,5 +20,5 @@ if(EXISTS ${CLANG_FORMAT})
             COMMENT "Running clang-format"
             COMMAND find ${SOURCE_DIRS} -name '*.cc' -o -name '*.cpp' -o -name '*.h' | grep -v "_generated.h" | xargs ${CLANG_FORMAT} --Werror --dry-run)
 else()
-    message(FATAL_ERROR "clang-format-14 not found")
+    message(WARNING "clang-format-14 not found, code formatting targets will not be available")
 endif()

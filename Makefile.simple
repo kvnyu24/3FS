@@ -1,0 +1,38 @@
+CXX = clang++
+CXXFLAGS = -std=c++17 -Wall -I. -g
+
+# Detect system and add appropriate flags
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+    # macOS needs an extra flag for <filesystem>
+    CXXFLAGS += -stdlib=libc++
+    # Recent macOS doesn't need -lc++fs
+    LDFLAGS = 
+else
+    # Linux might need -lstdc++fs for older gcc versions
+    LDFLAGS = -lstdc++fs
+endif
+
+# Default target
+all: test_ml_workload_analytics standalone_test
+
+# Original test
+test_ml_workload_analytics: test_ml_workload_analytics.cc src/monitor_collector/service/MLWorkloadAnalytics.cc
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Standalone test
+standalone_test: standalone_test.cc src/monitor_collector/service/MLWorkloadAnalytics.cc
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Run the tests
+run_test: test_ml_workload_analytics
+	./test_ml_workload_analytics
+
+run_standalone: standalone_test
+	./standalone_test
+
+# Clean up
+clean:
+	rm -f test_ml_workload_analytics standalone_test
+
+.PHONY: clean run_test run_standalone all 

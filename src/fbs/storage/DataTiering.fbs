@@ -1,0 +1,39 @@
+namespace hf3fs.storage.fbs;
+
+enum TierType : uint8 {
+  HOT = 0,
+  WARM = 1,
+  COLD = 2,
+  ARCHIVE = 3
+}
+
+table MoveTierReq {
+  chunk_id: uint64;
+  target_tier: TierType;
+  compress: bool = true;
+}
+
+table MoveTierRsp {
+  success: bool;
+  error_msg: string;
+  source_tier: TierType;
+  target_tier: TierType;
+}
+
+table GetTierInfoReq {
+  chunk_id: uint64;
+}
+
+table TierStats {
+  last_access_time: uint64;
+  read_count: uint64;
+  write_count: uint64;
+  access_frequency: float;
+  current_tier: TierType;
+  chunk_size: uint64;
+}
+
+table GetTierInfoRsp {
+  chunk_id: uint64;
+  stats: TierStats;
+} 

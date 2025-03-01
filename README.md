@@ -99,3 +99,59 @@ Follow instructions in [setup guide](deploy/README.md) to run a test cluster.
 ## Report Issues
 
 Please visit https://github.com/deepseek-ai/3fs/issues to report issues.
+
+# ML Workload Analytics for 3FS
+
+This repository contains an implementation of the ML Workload Analytics module for the Fire-Flyer File System (3FS).
+
+## Features
+
+The ML Workload Analytics service provides real-time monitoring and analysis of machine learning workloads interacting with the file system. Key features include:
+
+1. **Workload Type Detection**: Automatically classifies workloads as training, inference, data preparation, evaluation, or checkpoint operations.
+
+2. **Access Pattern Analysis**: Identifies sequential, random, batch, and checkpoint-specific access patterns to optimize storage management.
+
+3. **ML Framework Detection**: Detects the machine learning framework being used (PyTorch, TensorFlow, JAX, MXNet, etc.) based on file access patterns.
+
+4. **Historical Analysis**: Maintains historical records of workload activity for trend analysis.
+
+5. **Reporting**: Generates detailed reports on workload characteristics and performance metrics.
+
+## Implementation
+
+The implementation consists of:
+
+- `MLWorkloadAnalytics.h`: Header file defining the service interface and data structures.
+- `MLWorkloadAnalytics.cc`: Service implementation file with analysis algorithms.
+- Test files:
+  - `test_ml_workload_analytics.cc`: Basic test program
+  - `standalone_test.cc`: Comprehensive test suite
+
+## Testing
+
+The standalone test suite includes tests for:
+
+1. Sequential access pattern detection
+2. Workload type detection (training, inference, etc.)
+3. ML framework detection (PyTorch, TensorFlow)
+
+To build and run the tests:
+
+```bash
+make -f Makefile.simple run_standalone
+```
+
+## Integration with 3FS
+
+The ML Workload Analytics service is integrated with the 3FS storage layer through the `StorageOperator` class, which records file system operations and passes them to the analytics service. The service then analyzes these operations to identify patterns and provide insights.
+
+## Future Enhancements
+
+Potential future enhancements include:
+
+1. Improved framework detection using more sophisticated heuristics
+2. Integration with the prefetching mechanism to optimize data access
+3. ML-based prediction of access patterns
+4. Dashboard visualization of workload analytics
+5. Integration with autoscaling systems to optimize resource allocation

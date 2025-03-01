@@ -69,6 +69,32 @@ Result<Void> StorageOperator::init(uint32_t numberOfDisks) {
     return makeError(StorageCode::kStorageInitFailed);
   }
 
+  // Initialize data tiering service
+  auto tieringResult = dataTiering_.init();
+  if (!tieringResult) {
+    XLOG(ERR) << "Failed to initialize data tiering service: " << tieringResult.error();
+    // Continue anyway, data tiering is optional
+  }
+
+  // Initialize ML Workload Analytics
+  monitor_collector::MLWorkloadAnalytics::Config mlWorkloadConfig;
+  mlWorkloadConfig.set_enabled(true);
+  mlWorkloadConfig.set_analysis_interval_ms(5000);  // 5 seconds
+  mlWorkloadConfig.set_report_interval_ms(60000);   // 1 minute
+  mlWorkloadConfig.set_min_ops_for_detection(50);
+  mlWorkloadConfig.set_max_workloads_to_track(1000);
+  mlWorkloadConfig.set_workload_idle_timeout_ms(1800000);  // 30 minutes
+  mlWorkloadConfig.set_history_retention_hours(72);        // 3 days
+  
+  mlWorkloadAnalytics_.wlock()->reset(new monitor_collector::MLWorkloadAnalytics(mlWorkloadConfig));
+  auto mlWorkloadResult = mlWorkloadAnalytics_.wlock()->get()->init();
+  if (!mlWorkloadResult) {
+    XLOG(ERR) << "Failed to initialize ML Workload Analytics: " << mlWorkloadResult.error();
+    // Non-critical, continue without it
+  } else {
+    XLOG(INFO) << "ML Workload Analytics initialized successfully";
+  }
+
   return updateWorker_.start(numberOfDisks);
 }
 
@@ -76,12 +102,35 @@ Result<Void> StorageOperator::stopAndJoin() {
   storageReadAvgBytes.reset();
   updateWorker_.stopAndJoin();
   storageEventTrace_.close();
+
+  // Stop data tiering service
+  auto tieringResult = dataTiering_.stopAndJoin();
+  if (!tieringResult) {
+    XLOG(WARN) << "Failed to stop data tiering service: " << tieringResult.error();
+    // Continue anyway
+  }
+
+  if (auto analytics = mlWorkloadAnalytics_.wlock()->get()) {
+    auto result = analytics->stopAndJoin();
+    if (!result) {
+      XLOG(WARN) << "Failed to stop ML Workload Analytics: " << result.error();
+    }
+  }
+
   return Void{};
 }
 
 CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &requestCtx,
                                                    const BatchReadReq &req,
                                                    serde::CallContext &ctx) {
+  // Record start time for latency measurement
+  auto startTime = std::chrono::high_resolution_clock::now();
+
+  // Record access to the chunks being read for data tiering
+  for (const auto &item : req.items()) {
+    dataTiering_.recordAccess(ChunkId(item.chunk_id()), false);  // false = read operation
+  }
+
   XLOGF(DBG5, "Received batch read request {} with tag {} and {} IOs", fmt::ptr(&req), req.tag, req.payloads.size());
 
   auto recordGuard = storageReqReadRecoder.record(monitor::instanceTagSet(std::to_string(req.userInfo.uid)));
@@ -227,12 +276,54 @@ CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &reques
   waitAioAndPostRecordGuard.report(true);
 
   recordGuard.succ();
+
+  // After processing the read, record the operation for ML analytics
+  auto endTime = std::chrono::high_resolution_clock::now();
+  auto latencyUs = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count();
+  
+  // Extract client info from request context if available
+  std::string clientInfo = requestCtx.hasRemoteUserInfo() 
+      ? std::to_string(requestCtx.remoteUserInfo().userId) 
+      : "";
+  
+  // Extract job ID if available
+  std::string jobId = "";
+  if (requestCtx.hasHeaderValues()) {
+    auto headers = requestCtx.headerValues();
+    auto it = headers.find("jobId");
+    if (it != headers.end()) {
+      jobId = it->second;
+    }
+  }
+  
+  // Record read operations for each chunk
+  for (const auto& chunk : req.chunkReads) {
+    // Construct a path using chainId and chunkId
+    std::string path = "/" + std::to_string(chunk.vChainId.chainId) + 
+                       "/" + std::to_string(chunk.chunkId.value());
+    
+    recordOperation(
+        monitor_collector::OperationType::READ,
+        path,
+        chunk.length,
+        latencyUs,
+        chunk.offset,
+        clientInfo,
+        jobId);
+  }
+
   co_return rsp;
 }
 
 CoTryTask<WriteRsp> StorageOperator::write(ServiceRequestContext &requestCtx,
                                            const WriteReq &req,
                                            net::IBSocket *ibSocket) {
+  // Record start time for latency measurement
+  auto startTime = std::chrono::high_resolution_clock::now();
+
+  // Record access to the chunk being written for data tiering
+  dataTiering_.recordAccess(ChunkId(req.chunk_id()), true);  // true = write operation
+
   auto recordGuard = storageReqWriteRecoder.record(monitor::instanceTagSet(std::to_string(req.userInfo.uid)));
 
   XLOGF(DBG1,
@@ -278,6 +369,39 @@ CoTryTask<WriteRsp> StorageOperator::write(ServiceRequestContext &requestCtx,
         req.payload.key.chunkId,
         req.payload.key.vChainId.chainId,
         rsp.result);
+
+  // After processing the write, record the operation for ML analytics
+  auto endTime = std::chrono::high_resolution_clock::now();
+  auto latencyUs = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime).count();
+  
+  // Extract client info from request context if available
+  std::string clientInfo = requestCtx.hasRemoteUserInfo() 
+      ? std::to_string(requestCtx.remoteUserInfo().userId) 
+      : "";
+  
+  // Extract job ID if available
+  std::string jobId = "";
+  if (requestCtx.hasHeaderValues()) {
+    auto headers = requestCtx.headerValues();
+    auto it = headers.find("jobId");
+    if (it != headers.end()) {
+      jobId = it->second;
+    }
+  }
+  
+  // Construct a path using chainId and chunkId
+  std::string path = "/" + std::to_string(req.vChainId.chainId) + 
+                     "/" + std::to_string(req.chunkId.value());
+  
+  recordOperation(
+      monitor_collector::OperationType::WRITE,
+      path,
+      req.length,
+      latencyUs,
+      req.offset,
+      clientInfo,
+      jobId);
+
   co_return rsp;
 }
 
@@ -1198,6 +1322,179 @@ CoTryTask<GetAllChunkMetadataRsp> StorageOperator::getAllChunkMetadata(const Get
   }
 
   co_return Result<GetAllChunkMetadataRsp>(std::move(response));
+}
+
+CoTryTask<MoveTierRsp> StorageOperator::moveTier(const MoveTierReq &req) {
+  MoveTierRsp response;
+  
+  // Convert FlatBuffer TierType to StorageTier enum
+  auto convertTierType = [](TierType fbsTier) -> StorageTier {
+    switch (fbsTier) {
+      case TierType::HOT:
+        return StorageTier::HOT;
+      case TierType::WARM:
+        return StorageTier::WARM;
+      case TierType::COLD:
+        return StorageTier::COLD;
+      case TierType::ARCHIVE:
+        return StorageTier::ARCHIVE;
+      default:
+        return StorageTier::HOT;
+    }
+  };
+  
+  auto convertToFbsTier = [](StorageTier tier) -> TierType {
+    switch (tier) {
+      case StorageTier::HOT:
+        return TierType::HOT;
+      case StorageTier::WARM:
+        return TierType::WARM;
+      case StorageTier::COLD:
+        return TierType::COLD;
+      case StorageTier::ARCHIVE:
+        return TierType::ARCHIVE;
+      default:
+        return TierType::HOT;
+    }
+  };
+  
+  ChunkId chunkId(req.chunk_id());
+  StorageTier targetTier = convertTierType(req.target_tier());
+  StorageTier currentTier = dataTiering_.getTier(chunkId);
+  
+  response.set_source_tier(convertToFbsTier(currentTier));
+  response.set_target_tier(req.target_tier());
+  
+  try {
+    XLOG(INFO) << "Moving chunk " << chunkId << " to tier " << static_cast<int>(targetTier);
+    
+    // Call the data tiering service to move the chunk
+    auto result = co_await dataTiering_.moveToTier(chunkId, targetTier);
+    
+    response.set_success(result);
+    if (!result) {
+      response.set_error_msg("Failed to move chunk to target tier");
+    }
+  } catch (const std::exception &e) {
+    XLOG(ERR) << "Exception when moving chunk " << chunkId << " to tier: " << e.what();
+    response.set_success(false);
+    response.set_error_msg(e.what());
+  }
+  
+  co_return response;
+}
+
+CoTryTask<GetTierInfoRsp> StorageOperator::getTierInfo(const GetTierInfoReq &req) {
+  GetTierInfoRsp response;
+  ChunkId chunkId(req.chunk_id());
+  
+  response.set_chunk_id(req.chunk_id());
+  
+  auto convertToFbsTier = [](StorageTier tier) -> TierType {
+    switch (tier) {
+      case StorageTier::HOT:
+        return TierType::HOT;
+      case StorageTier::WARM:
+        return TierType::WARM;
+      case StorageTier::COLD:
+        return TierType::COLD;
+      case StorageTier::ARCHIVE:
+        return TierType::ARCHIVE;
+      default:
+        return TierType::HOT;
+    }
+  };
+  
+  try {
+    // Get the chunk info
+    auto chunk = components_.store->getChunk(chunkId);
+    if (!chunk) {
+      // If chunk doesn't exist, return an empty response
+      XLOG(WARN) << "Chunk " << chunkId << " not found when getting tier info";
+      co_return response;
+    }
+    
+    // Find the chunk stats in the data tiering service
+    auto it = dataTiering_.chunkStats_.find(chunkId);
+    if (it != dataTiering_.chunkStats_.end()) {
+      auto &stats = it->second;
+      
+      // Create and populate the tier stats
+      TierStats tierStats;
+      tierStats.set_last_access_time(stats.lastAccessTime);
+      tierStats.set_read_count(stats.readCount);
+      tierStats.set_write_count(stats.writeCount);
+      tierStats.set_access_frequency(stats.accessFrequency);
+      tierStats.set_current_tier(convertToFbsTier(stats.currentTier));
+      tierStats.set_chunk_size(chunk->getSize());
+      
+      response.set_stats(std::move(tierStats));
+    } else {
+      // If no stats found, create default stats
+      TierStats tierStats;
+      tierStats.set_current_tier(TierType::HOT);  // Default to HOT tier
+      tierStats.set_chunk_size(chunk->getSize());
+      
+      response.set_stats(std::move(tierStats));
+    }
+  } catch (const std::exception &e) {
+    XLOG(ERR) << "Exception when getting tier info for chunk " << chunkId << ": " << e.what();
+  }
+  
+  co_return response;
+}
+
+void StorageOperator::recordOperation(
+    monitor_collector::OperationType opType,
+    const std::string& path,
+    uint64_t sizeBytes,
+    uint64_t latencyUs,
+    uint64_t offset,
+    const std::string& clientInfo,
+    const std::string& jobId) {
+  
+  // Skip if ML Workload Analytics is not initialized or disabled
+  auto analytics = mlWorkloadAnalytics_.rlock();
+  if (!analytics->get()) {
+    return;
+  }
+  
+  // Create operation record
+  monitor_collector::OperationRecord record;
+  record.type = opType;
+  record.clientId = getClientIdFromInfo(clientInfo);
+  record.path = path;
+  record.timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::system_clock::now().time_since_epoch())
+                       .count();
+  record.sizeBytes = sizeBytes;
+  record.latencyUs = latencyUs;
+  record.offset = offset;
+  record.jobId = jobId;
+  
+  // Record the operation
+  try {
+    analytics->get()->recordOperation(record);
+  } catch (const std::exception& ex) {
+    XLOG(WARN) << "Failed to record operation in ML Workload Analytics: " << ex.what();
+  }
+}
+
+uint64_t StorageOperator::getClientIdFromInfo(const std::string& clientInfo) {
+  // If client info is not available, generate a hash of thread ID
+  if (clientInfo.empty()) {
+    std::hash<std::thread::id> hasher;
+    return hasher(std::this_thread::get_id());
+  }
+  
+  // Try to parse client info as a user ID (uint64)
+  try {
+    return std::stoull(clientInfo);
+  } catch (const std::exception&) {
+    // If parsing fails, hash the client info string
+    std::hash<std::string> hasher;
+    return hasher(clientInfo);
+  }
 }
 
 }  // namespace hf3fs::storage
