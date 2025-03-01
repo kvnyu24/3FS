@@ -118,7 +118,7 @@ bool isMLPath(const std::string& path) {
 MLWorkloadAnalytics::MLWorkloadAnalytics(const Config& config)
     : config_(config) {
   // Register config update callback
-  onConfigUpdated_ = config_.addCallbackGuard([this]() {
+  onConfigUpdated_ = config_.addCallbackGuard([]() {
     std::cout << "MLWorkloadAnalytics configuration updated" << std::endl;
   });
 }

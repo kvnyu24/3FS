@@ -14,7 +14,7 @@ else
 endif
 
 # Default target
-all: test_ml_workload_analytics standalone_test
+all: test_ml_workload_analytics standalone_test gtest_ml_workload_analytics
 
 # Original test
 test_ml_workload_analytics: test_ml_workload_analytics.cc src/monitor_collector/service/MLWorkloadAnalytics.cc
@@ -24,6 +24,22 @@ test_ml_workload_analytics: test_ml_workload_analytics.cc src/monitor_collector/
 standalone_test: standalone_test.cc src/monitor_collector/service/MLWorkloadAnalytics.cc
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Google Test based test
+gtest_ml_workload_analytics: tests/monitor_collector/MLWorkloadAnalyticsTest.cc src/monitor_collector/service/MLWorkloadAnalytics.cc
+	@echo "Detecting Google Test location..."
+	@if [ -d "/opt/homebrew/include/gtest" ]; then \
+		GTEST_DIR="/opt/homebrew/include"; \
+		GTEST_LIB="/opt/homebrew/lib"; \
+	elif [ -d "/usr/local/include/gtest" ]; then \
+		GTEST_DIR="/usr/local/include"; \
+		GTEST_LIB="/usr/local/lib"; \
+	else \
+		echo "Google Test not found, skipping gtest build"; \
+		exit 0; \
+	fi; \
+	echo "Building gtest_ml_workload_analytics..."; \
+	$(CXX) $(CXXFLAGS) -I$$GTEST_DIR -o $@ $^ -L$$GTEST_LIB -lgtest -lgtest_main -lgmock -pthread $(LDFLAGS)
+
 # Run the tests
 run_test: test_ml_workload_analytics
 	./test_ml_workload_analytics
@@ -31,8 +47,14 @@ run_test: test_ml_workload_analytics
 run_standalone: standalone_test
 	./standalone_test
 
+run_gtest: gtest_ml_workload_analytics
+	./gtest_ml_workload_analytics
+
+# Run all tests
+run_all_tests: run_test run_standalone run_gtest
+
 # Clean up
 clean:
-	rm -f test_ml_workload_analytics standalone_test
+	rm -f test_ml_workload_analytics standalone_test gtest_ml_workload_analytics
 
-.PHONY: clean run_test run_standalone all 
+.PHONY: clean run_test run_standalone run_gtest run_all_tests all 
