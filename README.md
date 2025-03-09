@@ -11,7 +11,7 @@ The Fire-Flyer File System (3FS) is a high-performance distributed file system d
   - **File Interfaces** Develops stateless metadata services backed by a transactional key-value store (e.g., FoundationDB). The file interface is well known and used everywhere. There is no need to learn a new storage API.
 
 - Diverse Workloads
-  - **Data Preparation** Organizes outputs of data analytics pipelines into hierarchical directory structures and manages large volume of intermediate outputs efficiently.
+  - **Data Preparation** Organizes outputs of data analytics pipelines into hierarchical directory structures and manages a large volume of intermediate outputs efficiently.
   - **Dataloaders** Eliminates the need for prefetching or shuffling datasets by enabling random access to training samples across compute nodes.
   - **Checkpointing** Supports high-throughput parallel checkpointing for large-scale training.
   - **KVCache for Inference** Provides a cost-effective alternative to DRAM-based caching, offering high throughput and significantly larger capacity.
@@ -31,6 +31,8 @@ The following figure demonstrates the throughput of read stress test on a large 
 
 ![Large block read throughput under stress test on a 180-node cluster](docs/images/peak_throughput.jpg)
 
+To benchmark 3FS, please use our [fio engine for USRBIO](benchmarks/fio_usrbio/README.md).
+
 ### 2. GraySort
 
 We evaluated [smallpond](https://github.com/deepseek-ai/smallpond) using the GraySort benchmark, which measures sort performance on large-scale datasets. Our implementation adopts a two-phase approach: (1) partitioning data via shuffle using the prefix bits of keys, and (2) in-partition sorting. Both phases read/write data from/to 3FS.
@@ -43,18 +45,18 @@ The test cluster comprised 25 storage nodes (2 NUMA domains/node, 1 storage serv
 ### 3. KVCache
 
 KVCache is a technique used to optimize the LLM inference process. It avoids redundant computations by caching the key and value vectors of previous tokens in the decoder layers.
-The top figure demonstrates the read throughput of all KVCache clients, highlighting both peak and average values, with peak throughput reaching up to 40 GiB/s. The bottom figure presents the IOPS of remove ops from garbage collection (GC) during the same time period.
+The top figure demonstrates the read throughput of all KVCache clients (1×400Gbps NIC/node), highlighting both peak and average values, with peak throughput reaching up to 40 GiB/s. The bottom figure presents the IOPS of removing ops from garbage collection (GC) during the same time period.
 
 ![KVCache Read Throughput](./docs/images/kvcache_read_throughput.png)
 ![KVCache GC IOPS](./docs/images/kvcache_gc_iops.png)
 
 ## Check out source code
 
-Clone 3FS repository from github:
+Clone 3FS repository from GitHub:
 
 	git clone https://github.com/deepseek-ai/3fs
 
-When `deepseek-ai/3fs` has been cloned to local file system, run the
+When `deepseek-ai/3fs` has been cloned to a local file system, run the
 following commands to check out the submodules:
 
 ```bash
@@ -69,21 +71,26 @@ Install dependencies:
 
 ```bash
 # for Ubuntu 20.04.
-apt install cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libprocps-dev libdwarf-dev libunwind-dev \
+apt install cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libdwarf-dev libunwind-dev \
   libaio-dev libgflags-dev libgoogle-glog-dev libgtest-dev libgmock-dev clang-format-14 clang-14 clang-tidy-14 lld-14 \
-  libgoogle-perftools-dev google-perftools libssl-dev ccache libclang-rt-14-dev gcc-10 g++-10 libboost1.71-all-dev
+  libgoogle-perftools-dev google-perftools libssl-dev libclang-rt-14-dev gcc-10 g++-10 libboost1.71-all-dev
 
 # for Ubuntu 22.04.
-apt install cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libprocps-dev libdwarf-dev libunwind-dev \
+apt install cmake libuv1-dev liblz4-dev liblzma-dev libdouble-conversion-dev libdwarf-dev libunwind-dev \
   libaio-dev libgflags-dev libgoogle-glog-dev libgtest-dev libgmock-dev clang-format-14 clang-14 clang-tidy-14 lld-14 \
-  libgoogle-perftools-dev google-perftools libssl-dev ccache gcc-12 g++-12 libboost-all-dev
+  libgoogle-perftools-dev google-perftools libssl-dev gcc-12 g++-12 libboost-all-dev
+
+# for openEuler 2403sp1
+yum install cmake libuv-devel lz4-devel xz-devel double-conversion-devel libdwarf-devel libunwind-devel \
+    libaio-devel gflags-devel glog-devel gtest-devel gmock-devel clang-tools-extra clang lld \
+    gperftools-devel gperftools openssl-devel gcc gcc-c++ boost-devel
 ```
 
 Install other build prerequisites:
 
 - [`libfuse`](https://github.com/libfuse/libfuse/releases/tag/fuse-3.16.1) 3.16.1 or newer version
 - [FoundationDB](https://apple.github.io/foundationdb/getting-started-linux.html) 7.1 or newer version
-- [Rust](https://www.rust-lang.org/tools/install) toolchain
+- [Rust](https://www.rust-lang.org/tools/install) toolchain: minimal 1.75.0, recommended 1.85.0 or newer version (latest stable version) 
 
 ## Build 3FS
 

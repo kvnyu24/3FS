@@ -4,11 +4,11 @@
 User Space Ring Based IO, or USRBIO, is a set of high-speed I/O functions on 3FS. User applications can directly submit I/O requests to the 3FS I/O queue in the FUSE process via the USRBIO API, thereby bypassing certain limitations inherent to FUSE itself. For example, this approach avoids the maximum single I/O size restriction, which is notoriously unfriendly to network file systems. It also makes the data exchange between the user and FUSE processes.
 
 ## Concepts
-**Iov**: A large shared memory region for zero-copy read/write operations, shared between the user and FUSE processes, with InfiniBand (IB) memory registration managed by the FUSE process. In the USRBIO API, all read data will be read into Iov, and all write data should be writen to Iov by user first.
+**Iov**: A large shared memory region for zero-copy read/write operations, shared between the user and FUSE processes, with InfiniBand (IB) memory registration managed by the FUSE process. In the USRBIO API, all read data will be read into Iov, and all write data should be written to Iov by user first.
 
 **Ior**: A small shared memory ring for communication between user process and FUSE process. The usage of Ior is similar to Linux [io-uring](https://unixism.net/loti/index.html), where the user application enqueues read/write requests, and the FUSE process dequeues these requests for completion. The I/Os are executed in batches controlled by the `io_depth` parameter, and multiple batches will be executed in parallel, be they from different rings, or even from the same ring. However, multiple rings are still recommended for multi-threaded applications, as synchronization is unavoidable when sharing a ring.
 
-**File descriptor Registration**: Functions are provided for file descriptor registration and deregistration. Only registered fds can be used for the USRBIO. The file descriptors in the user applicaiton are managed by the Linux kernel and the FUSE process has no way to know how they're actually associated with inode IDs it manages. The registration makes the I/O preparation function look more like the [uring counterpart](https://unixism.net/loti/ref-liburing/submission.html).
+**File descriptor Registration**: Functions are provided for file descriptor registration and deregistration. Only registered fds can be used for the USRBIO. The file descriptors in the user application are managed by the Linux kernel and the FUSE process has no way to know how they're actually associated with inode IDs it manages. The registration makes the I/O preparation function look more like the [uring counterpart](https://unixism.net/loti/ref-liburing/submission.html).
 
 ## Functions
 
@@ -63,19 +63,18 @@ void hf3fs_destroy(struct hf3fs_ior *ior);
 #### Parameters
 - **ior**: Address for Ior.
 
-### hf3fs_iovcreate2
+### hf3fs_iovcreate
 
 #### Summary
-Create an Iov instance and allocate shared memory for that Iov. All `hf3fs_iovcreate*` functions create Iov instances, but include various configurable parameters due to compatibility considerations.
+Create an Iov instance and allocate shared memory for that Iov.
 
 #### Syntax
 ```c
-int hf3fs_iovcreate2(struct hf3fs_iov *iov,
-                     const char *hf3fs_mount_point,
-                     size_t size,
-                     size_t block_size,
-                     int numa,
-                     const char *shm_path);
+int hf3fs_iovcreate(struct hf3fs_iov *iov,
+                    const char *hf3fs_mount_point,
+                    size_t size,
+                    size_t block_size,
+                    int numa);
 ```
 
 #### Parameters
@@ -84,7 +83,6 @@ int hf3fs_iovcreate2(struct hf3fs_iov *iov,
 - **size**: Shared memory size for this Iov.
 - **block_size**: If not `0`, this function will allocate multiple shared memory blocks, each sized no larger than `block_size`. `0` for allocate a single large shared memory. All IOs on this Iov should not span across the block margin. This parameter is for optimization on IB register time.
 - **numa**: Numa ID for Ior shared memory. `-1` for current process numa ID.
-- **shm_path**: Path of `tmpfs` mount point for shared memory allocation. If `nullptr`, use the default `/dev/shm`.
 
 #### Return Value
 - If success, return 0.
@@ -93,7 +91,7 @@ int hf3fs_iovcreate2(struct hf3fs_iov *iov,
 #### Example
 ```c
 struct hf3fs_iov iov;
-hf3fs_iovcreate2(&iov, "/hf3fs/mount/point", 1 << 30, 0, -1, nullptr);
+hf3fs_iovcreate(&iov, "/hf3fs/mount/point", 1 << 30, 0, -1);
 hf3fs_iovdestroy(&iov);
 ```
 
@@ -131,7 +129,7 @@ int hf3fs_reg_fd(int fd, uint64_t flags);
 ### hf3fs_dereg_fd
 
 #### Summary
-Deegister a file descriptor.
+Deregister a file descriptor.
 
 #### Syntax
 ```c
@@ -254,7 +252,7 @@ int main() {
     hf3fs_iorcreate4(&ior, "/hf3fs/mount/point", NUM_IOS, true, 0, 0, -1, 0);
     
     struct hf3fs_iov iov;
-    hf3fs_iovcreate2(&iov, "/hf3fs/mount/point", NUM_IOS * BLOCK_SIZE, 0, -1, nullptr);
+    hf3fs_iovcreate(&iov, "/hf3fs/mount/point", NUM_IOS * BLOCK_SIZE, 0, -1);
 
     int fd = open("/hf3fs/mount/point/example.bin", O_RDONLY);
     hf3fs_reg_fd(fd, 0);

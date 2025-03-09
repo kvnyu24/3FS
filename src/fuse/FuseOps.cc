@@ -12,6 +12,7 @@
 #include <folly/Utility.h>
 #include <folly/experimental/coro/BlockingWait.h>
 #include <folly/logging/xlog.h>
+#include <fstream>
 #include <fuse3/fuse_lowlevel.h>
 #include <iostream>
 #include <linux/fs.h>
@@ -2149,7 +2150,7 @@ void hf3fs_ioctl(fuse_req_t req,
         fuse_reply_err(req, EINVAL);
         return;
       }
-      if (name.has_branch_path()) {
+      if (name.has_parent_path()) {
         fuse_reply_err(req, EINVAL);
         return;
       }
